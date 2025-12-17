@@ -215,6 +215,68 @@ function compute_monomials(n,d,PR,order=:lex,cache=nothing; vars_reversed=false)
     end
 end
 
+# my_convert(T,x) = x
+my_convert(T,x::FqFieldElem) = begin
+    if characteristic(parent(x)) < 2^7
+        T(x.opaque[1])
+    else
+        x
+    end
+end
+
+function polynomial_to_sparse_data!((I,vals),f,n,order=:lex,cache=nothing; output_type=nothing)
+
+    # if I, J, and vals are not long enough, size_hint them
+
+    nTerms = length(terms(f))
+    if length(I) < nTerms || length(vals) < nTerms
+        sizehint!(I, nTerms)
+        sizehint!(vals, nTerms)
+    end
+
+    #TODO: remove vars_reversed and set it based on the cache's property
+
+    #TODO: if f turns out to be zero, we don't know what the degree should be.
+    #
+    #How best to fix this?
+    R = base_ring(parent(f))
+    d = total_degree(f)
+
+    # conv(x) = if output_type == Int && characteristic(R) < 2^7 # also: R is an FqField?
+    #     println("got it")
+    #     Int(x.opaque[1])
+    # else 
+    #     x
+    # end
+    if output_type == nothing
+        output_type = typeof(coeff(f,1))
+    end
+   
+
+    if cache != nothing
+        mon_vec = cache[d]
+        rev_mons = cache[d,:reverse]
+    else
+        mon_vec = gen_exp_vec(n,d,order)
+        rev_mons = Dict(mon_vec[i] => i for i in eachindex(mon_vec))
+    end
+
+
+    i = 1
+    for t in terms(f)
+        ev = leading_exponent_vector(t)
+        c = leading_coefficient(t)
+        I[i] = rev_mons[ev]
+        vals[i] = my_convert(output_type,c)
+        # push!(I, rev_mons[ev])
+        # push!(vals, my_convert(output_type,c))
+
+        i = i + 1
+    end
+
+    (I,vals,length(mon_vec))
+end
+
 """
     polynomial_to_vector!(v, f, n, order=:lex, cache=nothing; vars_reversed=false)
 
@@ -227,7 +289,7 @@ order - a symbol which denotes the term order
 cache - a GradedExpCache which gives us the variables
 vars_reversed - should we reverse the variables?
 """
-function polynomial_to_vector!(v, f, n, order=:lex,cache=nothing; vars_reversed=false)
+function polynomial_to_vector!(v, f, n, order=:lex,cache=nothing; vars_reversed=false, output_type=nothing)
 
     #TODO: remove vars_reversed and set it based on the cache's property
 
@@ -236,6 +298,17 @@ function polynomial_to_vector!(v, f, n, order=:lex,cache=nothing; vars_reversed=
     #How best to fix this?
     R = base_ring(parent(f))
     d = total_degree(f)
+
+    # conv(x) = if output_type == Int && characteristic(R) < 2^7 # also: R is an FqField?
+    #     println("got it")
+    #     Int(x.opaque[1])
+    # else 
+    #     x
+    # end
+    if output_type == nothing
+        output_type = typeof(coeff(f,1))
+    end
+   
 
     if cache != nothing
         mon_vec = cache[d]
@@ -247,10 +320,10 @@ function polynomial_to_vector!(v, f, n, order=:lex,cache=nothing; vars_reversed=
     for i in eachindex(mon_vec)
         if vars_reversed
             reverse!(mon_vec[i])
-            res[i] = coeff(f, mon_vec[i])
+            res[i] = my_convert(output_type,coeff(f, mon_vec[i]))
             reverse!(mon_vec[i])
         else
-            res[i] = coeff(f, mon_vec[i])
+            res[i] = my_convert(output_type,coeff(f, mon_vec[i]))
         end
     end
 
@@ -310,11 +383,17 @@ d - homogeneous degree
 PR - polynomial ring to be the parent of the return value
 order - a symbol which denotes the term order
 """
-function vector_to_polynomial(vect, n, d, PR, order=:lex, vars_reversed=false)
+function vector_to_polynomial(vect, n, d, PR, order=:lex, vars_reversed=false; cache=nothing)
     
     C = MPolyBuildCtx(PR)
     R = base_ring(PR)
-    exp_vecs = gen_exp_vec(n+1,d,order)
+
+    if cache == nothing
+        exp_vecs = gen_exp_vec(n+1,d,order)
+    else
+        exp_vecs = cache[d]
+    end
+
     @assert length(vect) == length(exp_vecs) "vector has incorrect length for the specified degree"
     for i in eachindex(vect)
         #res += PR(vect[i]) * mon[i]
